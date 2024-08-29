@@ -1,0 +1,6 @@
+[submodule "matiec/matiec"]
+	path = matiec/matiec
+	url = https://github.com/it-npc/matiec
+[submodule "bin/MBclient"]
+	path = bin/MBclient
+	url = https://github.com/it-npc/MBclient

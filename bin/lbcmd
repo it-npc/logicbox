@@ -1,0 +1,250 @@
+#!/usr/bin/perl
+
+# upload YAML config to Logic Box family PLC
+
+use strict; no strict 'subs';
+use Carp;
+use Data::Dumper;
+use Data::HexDump;
+use Digest::SHA qw(sha256);
+use MIME::Base64;
+use JSON;
+use POSIX;
+use Socket;  # for inet_ntoa
+use Time::HiRes qw(sleep gettimeofday tv_interval);
+my $basedir;
+BEGIN {
+    # find the base directory path, assuming this script is
+    # started as /path/to/basedir/host/script
+    # or /path/to/basedir/bin/script
+    $basedir = ($0 =~ m,^(/.+)/([^/]+)/[^/]+$,? $1: # /path/bin/script
+                $0 =~ m,^\./[^/]+$,? (getcwd =~ m,^(.*)/([^/]+),, $1):
+                $0 =~ m,^()([^/]+)/[^/]+$,? getcwd: # bin/script
+                $0 =~ m,^(.+)/([^/]+)/[^/]+$,? (`cd $1; pwd`): # ../bin/script
+                die "could not infer basedir from $0");
+    chomp $basedir;
+    unshift @INC, "$basedir/$2/MBclient/lib";
+    unshift @INC, "$basedir/$2";
+};
+use NPC21::Conf;
+use NPC21::Modbus;
+
+
+sub usage {
+    die
+        ("Usage: cmd PLCNAME[/SLOT] [SECONDS] VAR [VAR...]\n",
+         "       cmd PLCNAME[/SLOT] [SECONDS] VAR=VAL [VAR=VAL...]\n",
+         "       cmd PLCNAME[/SLOT] [SECONDS] [-F|--force] VAR=VAL [VAR=VAL...]\n",
+         "       cmd PLCNAME[/SLOT] [SECONDS] [-U|--unforce] VAR [VAR...]\n",
+         "       cmd PLCNAME[/SLOT] --settime[=SECONDS]\n",
+         "       cmd PLCNAME[/SLOT] --restart {10s|1h|...}\n",
+         "       cmd PLCNAME[/SLOT] --stats\n",
+         "       cmd PLCNAME[/SLOT] --getconf\n",
+         "       cmd PLCNAME[/SLOT] --abort\n",
+         "       cmd PLCNAME[/SLOT] [-f conffile.yml] ...\n",
+#         "       cmd PLCNAME [SECONDS] [slotN] --stat [COUNTER] [VAR...]\n",
+#         " VAR and COUNTER are POSIX regular expressions (man 7 regex)\n",
+         "");
+}
+
+my $conffile = "$basedir/conf/conf.yml";
+my $timeout = 10;  # seconds
+my $plc_name;
+my $plc_slot;
+my $plc_slot2;
+my $seconds;
+my %val;
+my @order;  # output vars in the same order as in cmdline
+my %req;
+
+$SIG{PIPE} = sub {die "got SIGPIPE, probably Modbus connection failed\n"};
+
+sub parse_args {
+    while (local $_ = shift @ARGV) {
+        if (/^([a-z][.\w]+)(\/(-?\d+))?(\/(-?\d+))?$/i && !$plc_name) {
+            $plc_name = $1;
+            $plc_slot = $3;
+            $plc_slot2 = $5;
+        }
+        elsif (/^--settime(=(\d+))?$/) {
+            # plc expects a string, not a number
+            $req{settime} = "" . ($2 || time());
+        }
+        elsif (/^--(abort|getconf|stats)$/) {
+            $req{$1} = 1;
+        }
+        elsif (/^--restart$/) {
+            $req{restart} = (shift @ARGV) // usage();
+        }
+        elsif (/^\d+(\.\d*)?$/i && !$seconds) {
+            $seconds = $_;
+        }
+        elsif (/^-f(.*)$/) {
+            $conffile = $1 || (shift @ARGV) // usage();
+        }
+        elsif (/^-t(.*)$/) {
+            $timeout = $1 || (shift @ARGV) // usage();
+        }
+        elsif (/^-F$/ || /^--force$/) {
+            $req{force} = 1;
+        }
+        elsif (/^-U$/ || /^--unforce$/) {
+            $req{unforce} = 1;
+        }
+        elsif (/^([-\w.]+)=(\d+(\.\d*)?)$/) {
+            $val{$1} = $2;
+            push @order, $1;
+        }
+        elsif (/^([-\w.]+)$/) {
+            $val{$1} = "";
+            push @order, $1;
+        }
+        else {
+            usage ();
+        }
+    }
+
+    usage unless $plc_name;
+    usage unless %val || %req;
+}
+
+
+parse_args();
+my $tree = NPC21::Conf::load($conffile);
+#die Dumper $tree;
+if (! $tree->{$plc_name}) {
+    die "$conffile: no PLC `$plc_name'\n";
+}
+$tree->{$plc_name}{hostname} //= $plc_name;
+
+my $ipaddr = ($tree->{$plc_name}{ipaddr} =~ s/\/\d+//r);  # static IP, optional
+my $macaddr = ($tree->{$plc_name}{macaddr} ||
+               $tree->{$plc_name}{"slot-1"}{macaddr})
+    or die "no $plc_name:macaddr or $plc_name:slot-1:macaddr in $conffile\n";
+
+for my $var (keys %val) {
+    if ($val{$var} eq "") {
+        $req{$req{unforce}? "unforce": "get"}{$var} = "";
+    }
+    else {
+        usage if $req{unforce};
+        $req{$req{force}? "force": "set"}{$var} = $val{$var};
+    }
+}
+
+my $json = JSON->new->canonical([ENABLE]); # canonical == sorted keys
+my $img = $json->encode(\%req);
+my $m = NPC21::Modbus->new(
+    HOST => ($ipaddr || $macaddr),
+    SLOT => $plc_slot,
+    SLOT2 => $plc_slot2,
+    ABORT => $req{abort},
+    );
+
+repeat:
+
+my $offset = 0;
+my $chunksz = NPC21::Modbus::MAXLEN - 4; # shorter in npc21_modbus_start
+$chunksz -=3 if defined $plc_slot;  # NPC21_MODBUS_TAG_SLOT overhead
+$chunksz -=3 if defined $plc_slot2;
+my $piece;
+while ($piece = substr($img, $offset, $chunksz)) {
+    last if (length ($piece) <= $chunksz - 32);   # will fit CMDS
+    #warn "send @{[length $piece]}\@$offset\n";
+    my $reply;
+    if ($offset == 0) {
+        my $req = pack("Na*", length($img), $piece);
+        $reply = $m->npc21(NPC21::Modbus::TAG_START, $req);
+    }
+    else {
+        $reply = $m->npc21(NPC21::Modbus::TAG_UPDATE, $piece);
+    }
+
+    if (my $err = NPC21::Modbus::error ($reply)) {
+        die "error: $err\n";
+    }
+
+    $offset += $chunksz;
+    $chunksz = NPC21::Modbus::MAXLEN;  # full in npc21_modbus_update
+}
+
+# Issue CMDS command
+my $req = pack("a32a*", sha256($img), $piece);
+my $reply = $m->npc21(NPC21::Modbus::TAG_CMDS, $req);
+
+my $err = NPC21::Modbus::error ($reply);
+if ($err) {
+    die "CMDS command: $err\n";
+}
+
+if (length ($reply) < 1+256/8) {
+    die "CMDS command: unexpected short reply: ", length ($reply), "\n";
+}
+
+if ($m->npc21_len() > NPC21::Modbus::MAXLEN) {  # sign: there is a continuation
+    my $reply2;
+    do {
+        $reply2 = $m->npc21(NPC21::Modbus::TAG_MORE, pack("N", length($reply)));
+        if (my $err = NPC21::Modbus::error ($reply2)) {
+            die "MORE command: $err\n";
+        }
+        $reply .= substr($reply2, 1);
+    } while (length ($reply2) == NPC21::Modbus::MAXLEN);
+}
+
+my (undef, $digest, $body) = unpack ("Ca32a*", $reply);
+if (sha256($body) ne $digest) {
+warn HexDump($reply);
+    die "CMDS command: reply sha256 check failed\n";
+}
+
+my $output_lines = 0;
+my $hh = decode_json ($body);
+if ($hh->{get}) {
+    print strftime("%F %T", localtime);
+    printf (".%03u ", (gettimeofday)[1]/1e6*1000);
+    for my $varname (keys %{$hh->{get}}) {
+        local $_ = $hh->{get}{$varname};
+        if (s/^=\?application\?B\?//) {
+            s/\?=$//;
+            my $bin = decode_base64($_);
+            $hh->{get}{$varname} = "\n" . HexDump($bin);
+        }
+    }
+    my @out;
+    for (@order) {
+        next unless exists $hh->{get}{$_};
+        push @out, "$_=$hh->{get}{$_}";
+        delete $hh->{get}{$_};
+    }
+    # just in case something unexpected is left there
+    push @out, map {"$_=$hh->{get}{$_}"} sort keys %{$hh->{get}};
+    print "@out\n";
+    $output_lines++;
+}
+
+if ($hh->{stats}) {
+    for (sort keys %{$hh->{stats}}) {
+        print "$_ = $hh->{stats}{$_}\n";
+        $output_lines++;
+    }
+}
+
+if (my $str = $hh->{getconf}) {
+    my $conf = decode_json ($str);
+    if (my $hostname = $conf->{hostname}) {
+        delete $conf->{hostname};
+        $conf = {$hostname => $conf};
+    }
+    print YAML::Dump($conf);
+    $output_lines += 100;  # >1, don't bother counting
+}
+
+if ($seconds) {
+    print "\n" if $output_lines > 1;
+    sleep ($seconds);
+    goto repeat;
+}
+
+$m->close();
+exit 0;
