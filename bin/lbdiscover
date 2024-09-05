@@ -143,11 +143,16 @@ my $cmd = join '&', @cmd;
 my %seen;
 for (`$cmd`) {
     # 64 bytes from fe80::f612:faff:fed5:5197%eth1: icmp_seq=0 ttl=255 time=1.362 ms
-    /^64 bytes from fe80::(\w\w)(\w\w):(\w\w)ff:fe(\w\w):(\w\w)(\w\w)\%(\w+)/
+    /^64 bytes from fe80::(\w+):(\w+):(\w+):(\w+)\%(\w+)/
         && do {
-            my $byte1 = sprintf("%02x", hex($1) & ~0x02);
-            $seen{"$byte1:$2:$3:$4:$5:$6"} = $7;
-            warn "seen $byte1:$2:$3:$4:$5:$6 at $7\n" if $verbose;
+            my $iface = $5;
+            my @a = map {hex} $1, $2, $3, $4;
+            $a[0] ^= 0x0200;
+            my @b = map {($_ >> 8, $_ & 0xff)} @a;
+            splice @b, 3, 2;  # take out ff:fe
+            my $macaddr = sprintf "%02x:%02x:%02x:%02x:%02x:%02x", @b;
+            $seen{$macaddr} = $iface;
+            warn "seen $macaddr at $iface\n" if $verbose;
     };
 }
 

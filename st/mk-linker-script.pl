@@ -213,6 +213,7 @@ SECTIONS
 {
   .text %TEXT_START% : {
         *(.theader)
+        *(.literal)
         *(.text)
         . = ALIGN(4);
   }

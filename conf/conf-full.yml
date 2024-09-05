@@ -116,6 +116,13 @@ plc1:
       addr: 120
       inbit0..5: {var: myvar11..16, period: 1s}
 
+    # flood RS-485 with meaningless (non-Modbus) test data.
+    # Sends dense stream with almost no delay between portions.
+    # addr is formally required but unused.
+    modbus_client1000:
+      addr: 1
+      test_pattern: "UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU"
+
     # clients on port 1
     # Multiple clients ok, but server on the same port disallowed
     modbus_client_1:

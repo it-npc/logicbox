@@ -34,13 +34,14 @@ use constant MAXLEN => 250;  # data only, after fn+tag+len
 
 my $ipaddr_pat = '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$';
 my $ip6addr_pat = '^([\da-f]{1,4}:{1,2})+[\da-f]{1,4}(%\w+)?$';
-my $macaddr_pat = '^([a-f0-9]{2}:?){6}$';
+my $macaddr_pat = '^([\da-f]{1,2}:){5}([\da-f]{1,2})$';
+
 
 my @children;  # pids of all subprocesses forked in new()
 
 # When HOST is an IPv6 link-local, we have to try at all interfaces
 # available.  We do this by forking a child for every interface that
-# try to connect.  Normally only one child will succeed, others will
+# tries to connect.  Normally only one child will succeed, others will
 # timeout and fail.  The winner child returns to the caller with
 # MBclient ready for commands, the parent stays silently waiting and
 # exits silently after it sees a child exit code of 0.
@@ -140,11 +141,10 @@ sub list_ifaces {
 # make IPv6 link-local address from EUI-48
 sub ipv6_link_local_from_mac {
     my ($macaddr) = @_;
-    $macaddr =~ s/://g;
-    $macaddr =~ s/^(\w\w)/sprintf "%02x", hex($1) ^ 0x02/e; # "Modified"
-    $macaddr = lc $macaddr;
-    $macaddr =~ /(....)(..)(..)(....)/ or die "`$macaddr'";
-    return "fe80::" . "$1:$2ff:fe$3:$4";
+    my @a = split ':', $macaddr;
+    my @b = map {hex} @a;
+    $b[0] ^= 0x02; # "Modified"
+    return sprintf "fe80::%02x%02x:%02xff:fe%02x:%02x%02x", @b;
 }
 
 

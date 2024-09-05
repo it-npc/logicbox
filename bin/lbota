@@ -91,7 +91,7 @@ my $m = NPC21::Modbus->new(
 
 my $file = $otafile;
 open(my $fh, $file) or die "$file: $!\n";
-sysread($fh, my $img, 1e6) == -s $file
+sysread($fh, my $img, 2e6) == -s $file
     or die "$file: too big or I/O error\n";
 
 

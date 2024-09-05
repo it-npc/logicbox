@@ -95,6 +95,10 @@ sub parse_args {
             $val{$1} = $2;
             push @order, $1;
         }
+        elsif (/^(sys.serial)=(\w+)$/i) {
+            $val{$1} = $2;
+            push @order, $1;
+        }
         elsif (/^([-\w.]+)$/) {
             $val{$1} = "";
             push @order, $1;

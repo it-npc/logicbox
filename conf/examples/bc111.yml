@@ -13,8 +13,8 @@ bc111:
     OUT1: 1
     OUT2: 1
   task0:
-    period: 1ms
-    maxrun: 5ms
+    period: 10ms
+    maxrun: 15ms
     prog1: {enable: y, file: "examples/01-oscillator.st"}
   on_stop:
     maxrun: 100ms

@@ -45,11 +45,13 @@ REMOVE_UNNEEDED_SECTIONS+=--remove-section=.xt.prop
 REMOVE_UNNEEDED_SECTIONS+=--remove-section=.comment
 REMOVE_UNNEEDED_SECTIONS+=--remove-section=.xtensa.info
 
-LDFLAGS+=-T linker-script.ld
+LDFLAGS+=-T build/linker-script.ld
 LDFLAGS+=-nostartfiles
 LDFLAGS+=-nodefaultlibs
 LDFLAGS+=-u headers
 LDFLAGS+=-Xlinker -Map=build/map.txt
+
+LIBS+=-lm -lc
 
 SECTIONS_HEADER_TEXT+=--only-section=.theader
 SECTIONS_HEADER_TEXT+=--only-section=.text
@@ -82,8 +84,8 @@ size:
 	         BSS_START=0x3c7f0000 binary
 	./size-from-map.pl ./build/map.txt
 
-.PHONY: linker-script.ld
-linker-script.ld:
+.PHONY: build/linker-script.ld
+build/linker-script.ld:
 	./mk-linker-script.pl $(TEXT_START) $(DATA_START) $(BSS_START) > $@.new
 	mv $@.new $@
 
@@ -91,10 +93,10 @@ build/headers.c: mk-headers.pl build/POUS.c
 	./mk-headers.pl build/POUS.c > $@.new
 	mv $@.new $@
 
-build/text.bin build/data.bin: build/merged.o build/headers.c linker-script.ld
+build/text.bin build/data.bin: build/merged.o build/headers.c build/linker-script.ld
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) -c build/headers.c -o build/headers.o
 	$(OBJCOPY) $(REMOVE_UNNEEDED_SECTIONS) build/headers.o
-	$(CC) $(LDFLAGS) build/headers.o build/merged.o -o build/merged.elf
+	$(CC) $(LDFLAGS) build/headers.o build/merged.o $(LIBS) -o build/merged.elf
 	$(OBJCOPY) -O binary $(SECTIONS_HEADER_TEXT) build/merged.elf build/text.bin
 	$(OBJCOPY) -O binary $(SECTION_DATA) build/merged.elf build/data.bin
 

@@ -29,11 +29,12 @@ use NPC21::Modbus;
 
 
 sub usage {
-    confess "Usage: conf {PLCNAME|--all} [-f /path/to/conf.yml]\n";
+    confess "Usage: conf {PLCNAME|--all} [-f /path/to/conf.yml] [--bymac]\n";
 }
 
 
 my $plc_name;  # as seen in conf.yml
+my $bymac; # use IPv6 even if static ipaddr is present in conf.yml
 my $conffile = "$basedir/conf/conf.yml";
 my $timeout = 10;  # for CONFSTAT, seconds
 
@@ -46,6 +47,9 @@ sub parse_args {
         elsif (/^-f(.*)$/) {
             $conffile = $1 || shift @ARGV;
         }
+        elsif (/^--bymac$/) {
+            $bymac = 1;
+        }
         else {
             usage ();
         }
@@ -54,7 +58,10 @@ sub parse_args {
 }
 
 
-$SIG{PIPE} = sub {die "got SIGPIPE, probably Modbus connection failed\n"};
+$SIG{PIPE} = sub {
+    die ("got SIGPIPE, probably Modbus connection failed\n",
+         "Try --bymac?\n");
+};
 
 parse_args();
 my $tree = NPC21::Conf::load($conffile);
@@ -80,6 +87,9 @@ my $macaddr = ($tree->{$plc_name}{macaddr} ||
                $tree->{$plc_name}{"slot-1"}{macaddr})
     or die "no $plc_name:macaddr or $plc_name:slot-1:macaddr in $conffile\n";
 
+if ($bymac) {
+    $ipaddr = undef;
+}
 # add timestamp
 #if ($plc_name =~ /^bc/) {  # until net/net-104 are updated too
 #    $tree->{$plc_name}{stamp} = (stat($conffile))[9];  # mtime
