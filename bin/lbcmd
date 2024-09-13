@@ -40,6 +40,7 @@ sub usage {
          "       cmd PLCNAME[/SLOT] --restart {10s|1h|...}\n",
          "       cmd PLCNAME[/SLOT] --stats\n",
          "       cmd PLCNAME[/SLOT] --getconf\n",
+         "       cmd PLCNAME[/SLOT] --fboot FILE\n",
          "       cmd PLCNAME[/SLOT] --abort\n",
          "       cmd PLCNAME[/SLOT] [-f conffile.yml] ...\n",
 #         "       cmd PLCNAME [SECONDS] [slotN] --stat [COUNTER] [VAR...]\n",
@@ -72,6 +73,14 @@ sub parse_args {
         }
         elsif (/^--(abort|getconf|stats)$/) {
             $req{$1} = 1;
+        }
+        elsif (/^--fboot$/) {
+            my $file = (shift @ARGV) // usage();
+            -f $file || $file eq "-" || die "fboot file $file does not exist\n";
+            $req{fboot} = `cat $file`; $? == 0 or die "$?";
+            if ($req{fboot} =~ /\0/) {
+                die "--fboot: ASCII file expected\n";
+            }
         }
         elsif (/^--restart$/) {
             $req{restart} = (shift @ARGV) // usage();
@@ -147,35 +156,31 @@ my $m = NPC21::Modbus->new(
 
 repeat:
 
-my $offset = 0;
-my $chunksz = NPC21::Modbus::MAXLEN - 4; # shorter in npc21_modbus_start
-$chunksz -=3 if defined $plc_slot;  # NPC21_MODBUS_TAG_SLOT overhead
-$chunksz -=3 if defined $plc_slot2;
-my $piece;
-while ($piece = substr($img, $offset, $chunksz)) {
-    last if (length ($piece) <= $chunksz - 32);   # will fit CMDS
-    #warn "send @{[length $piece]}\@$offset\n";
-    my $reply;
-    if ($offset == 0) {
-        my $req = pack("Na*", length($img), $piece);
-        $reply = $m->npc21(NPC21::Modbus::TAG_START, $req);
-    }
-    else {
-        $reply = $m->npc21(NPC21::Modbus::TAG_UPDATE, $piece);
-    }
-
-    if (my $err = NPC21::Modbus::error ($reply)) {
+my $req = pack("a32a*", sha256($img), $img);
+my $maxsz = NPC21::Modbus::MAXLEN;  # full in npc21_modbus_update
+$maxsz -=3 if defined $plc_slot;  # NPC21_MODBUS_TAG_SLOT overhead
+$maxsz -=3 if defined $plc_slot2;
+if (length($req) > $maxsz) {
+    my $piece = substr ($req, $maxsz, $maxsz-4);
+    substr ($req, $maxsz, $maxsz-4) = "";
+    my $req1 = pack("Na*", length($req), $piece);
+    my $reply = $m->npc21(NPC21::Modbus::TAG_START, $req1);
+    if (my $err = NPC21::Modbus::error($reply)) {
         die "error: $err\n";
     }
 
-    $offset += $chunksz;
-    $chunksz = NPC21::Modbus::MAXLEN;  # full in npc21_modbus_update
+    while (length($req) > $maxsz) {
+        my $piece = substr ($req, $maxsz, $maxsz);
+        substr ($req, $maxsz, $maxsz) = "";
+        my $reply = $m->npc21(NPC21::Modbus::TAG_UPDATE, $piece);
+        if (my $err = NPC21::Modbus::error($reply)) {
+            die "error: $err\n";
+        }
+    }
 }
 
 # Issue CMDS command
-my $req = pack("a32a*", sha256($img), $piece);
 my $reply = $m->npc21(NPC21::Modbus::TAG_CMDS, $req);
-
 my $err = NPC21::Modbus::error ($reply);
 if ($err) {
     die "CMDS command: $err\n";

@@ -4,3 +4,5 @@ build--/
 build---/
 *~
 TAGS
+usbport.mk
+serial.bin
