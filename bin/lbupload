@@ -45,7 +45,7 @@ my $same_size_workaround;
 
 sub parse_args {
     while (defined (local $_ = shift @ARGV)) {
-        if (/^(plc|bc)[.\w]+$/i && !$plc_name) {
+        if (/^[a-z][.\w]+$/i && !$plc_name) {
             $plc_name = $_;
         }
         elsif (/^(prog)?(\d+)$/ && ! defined $progn) {
@@ -91,9 +91,7 @@ if (! $tree->{$plc_name}) {
 $tree->{$plc_name}{hostname} //= $plc_name;
 
 my $ipaddr = ($tree->{$plc_name}{ipaddr} =~ s/\/\d+//r);  # static IP, optional
-my $macaddr = ($tree->{$plc_name}{macaddr} ||
-               $tree->{$plc_name}{"slot-1"}{macaddr})
-    or die "no $plc_name:macaddr or $plc_name:slot-1:macaddr in $conffile\n";
+my $macaddr = NPC21::Conf::macaddr ($tree, $plc_name);
 my $m = NPC21::Modbus->new(HOST => ($ipaddr || $macaddr));
 
 # find scrfile by progn in conf.yml

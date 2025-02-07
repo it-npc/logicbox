@@ -102,7 +102,8 @@ sub new {
                 kill 9, @children; # clean up the losers
                 exit 0;
             }
-            next if $? == (33<<8);  # loser child finished
+            next if $? == (33<<8);  # loser child exited after connect(2) fail
+            next if $? == (32<<8);  # a loser terminated by SIGPIPE
             next if $? == 9;        # a loser terminated by SIGKILL
             my ($excode, $signal) = ($? >> 8, $? & 0xff);
             if ($excode != 1 && $excode != 255) {  # exit(1) and die

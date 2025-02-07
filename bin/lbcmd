@@ -41,7 +41,9 @@ sub usage {
          "       cmd PLCNAME[/SLOT] --stats\n",
          "       cmd PLCNAME[/SLOT] --getconf\n",
          "       cmd PLCNAME[/SLOT] --fboot FILE\n",
+         "       cmd PLCNAME[/SLOT] --nofboot\n",
          "       cmd PLCNAME[/SLOT] --abort\n",
+         "       cmd PLCNAME[/SLOT] --calibrate VOLTAGE\n",
          "       cmd PLCNAME[/SLOT] [-f conffile.yml] ...\n",
 #         "       cmd PLCNAME [SECONDS] [slotN] --stat [COUNTER] [VAR...]\n",
 #         " VAR and COUNTER are POSIX regular expressions (man 7 regex)\n",
@@ -74,6 +76,19 @@ sub parse_args {
         elsif (/^--(abort|getconf|stats)$/) {
             $req{$1} = 1;
         }
+        elsif (/^--calibrate$/) {
+            my $voltage = (shift @ARGV) // usage();
+            if ($voltage !~ /^\d+\.\d+$/) {
+                die "--calibrate: voltage expected (N.NNNN)";
+            }
+            if ($voltage > 3.3) {
+                die "--calibrate: voltage less than 3.3V expected";
+            }
+            if ($voltage !~ /\.\d\d\d\d+/) {
+                die "--calibrate: at least 4 digit precision is expected";
+            }
+            $req{calibrate} = $voltage;
+        }
         elsif (/^--fboot$/) {
             my $file = (shift @ARGV) // usage();
             -f $file || $file eq "-" || die "fboot file $file does not exist\n";
@@ -81,6 +96,9 @@ sub parse_args {
             if ($req{fboot} =~ /\0/) {
                 die "--fboot: ASCII file expected\n";
             }
+        }
+        elsif (/^--nofboot$/) {
+            $req{nofboot} = 1;
         }
         elsif (/^--restart$/) {
             $req{restart} = (shift @ARGV) // usage();
@@ -104,7 +122,7 @@ sub parse_args {
             $val{$1} = $2;
             push @order, $1;
         }
-        elsif (/^(sys.serial)=(\w+)$/i) {
+        elsif (/^([-\w.]+)=(\w+)$/i) {  # e.g. sys.trace=f1000
             $val{$1} = $2;
             push @order, $1;
         }
@@ -131,9 +149,7 @@ if (! $tree->{$plc_name}) {
 $tree->{$plc_name}{hostname} //= $plc_name;
 
 my $ipaddr = ($tree->{$plc_name}{ipaddr} =~ s/\/\d+//r);  # static IP, optional
-my $macaddr = ($tree->{$plc_name}{macaddr} ||
-               $tree->{$plc_name}{"slot-1"}{macaddr})
-    or die "no $plc_name:macaddr or $plc_name:slot-1:macaddr in $conffile\n";
+my $macaddr = NPC21::Conf::macaddr ($tree, $plc_name);
 
 for my $var (keys %val) {
     if ($val{$var} eq "") {
@@ -248,6 +264,18 @@ if (my $str = $hh->{getconf}) {
     print YAML::Dump($conf);
     $output_lines += 100;  # >1, don't bother counting
 }
+
+if ($hh->{calibrate}) {
+    my @a;
+    for (my $i = 0; $i < @{$hh->{calibrate}}; $i++) {
+        my $st = $hh->{calibrate}[$i];
+        push @a, "ch$i:" . ($st <= 2? "TIMEOUT":
+                            $st == 5? "OK":
+                            "ERR=$st");
+    }
+    print "Calibration status: @a\n";
+}
+
 
 if ($seconds) {
     print "\n" if $output_lines > 1;

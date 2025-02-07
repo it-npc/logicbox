@@ -54,6 +54,39 @@ sub load {
     }
 }
 
+# return mac address of the "main" base module for $plc_name from
+# conf.yml tree.  For LB241, it is the slot-1 module.  For LB340, it
+# is the base module with the lowest slot number.
+sub macaddr {
+    my ($tree, $plc_name) = @_;
+    my @candidates;
+    for (keys %{$tree->{$plc_name}}) {
+        ref $tree->{$plc_name}{$_} || next; # shallow, e.g. `hostname'
+        my $macaddr = $tree->{$plc_name}{$_}{macaddr} // next;
+        my $module = $tree->{$plc_name}{$_}{module} // next;
+        if ($module =~ /^bcbase|LB241BC|LB241CPU/) {
+            if (/^slot-1$/) {
+                return $macaddr;    # LB241, no need to look further
+            }
+        }
+        elsif ($module =~ /LB340CPU/) {
+            /^slot(\d+)/ || die "`$_': expected slotN";
+            push @candidates, [$1, $macaddr];
+        }
+        else {
+            # i/o module with macaddr, not base
+        }
+    }
+
+    for (sort {$a->[0]<=>$b->[0]} @candidates) {
+        if ($_->[0] >= 1) {  # negative invalid for LB340
+            return $_->[1];
+        }
+    }
+    die "$conffile: $plc_name: no base module with macaddr specified\n"; 
+}
+
+
 #@ARGV or die "Usage: splityaml2json {FILE|DIR}\n";
 #my $x = splityaml_load($ARGV[0]);
 ##print Dumper($x);

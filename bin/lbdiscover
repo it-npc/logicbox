@@ -38,6 +38,8 @@ my $conffile = "$basedir/conf/conf.yml";
 my $newonly;  # -n: hush plcs/bcs already present in conf.yml
 my $verbose;  # -v: output redundant inf as we go
 
+$SIG{PIPE} = sub {die "got SIGPIPE, probably Modbus connection failed\n"};
+
 sub parse_args {
     while (local $_ = shift @ARGV) {
         if (/^-f(.*)$/) {

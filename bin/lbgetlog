@@ -119,6 +119,7 @@ sub exit_if_eof_unless_follow {
         }
         else {
             $m->close ();
+#confess "matches_found=$matches_found";
             exit ($matches_found? 0:1);
         }
     }
@@ -134,9 +135,8 @@ if (! $tree->{$plc_name}) {
 $tree->{$plc_name}{hostname} //= $plc_name;
 
 my $ipaddr = ($tree->{$plc_name}{ipaddr} =~ s/\/\d+//r);  # static IP, optional
-my $macaddr = ($tree->{$plc_name}{macaddr} ||
-               $tree->{$plc_name}{"slot-1"}{macaddr})
-    or die "no $plc_name:macaddr or $plc_name:slot-1:macaddr in $conffile\n";
+my $macaddr = NPC21::Conf::macaddr ($tree, $plc_name);
+
 $m = NPC21::Modbus->new(
     HOST => ($ipaddr || $macaddr),
     SLOT => $plc_slot,
@@ -152,8 +152,8 @@ $flags_regexs[0] .= $lines if defined $lines;
 $flags_regexs[0] .= "r" if $reverse;
 $flags_regexs[0] .= "f" if $follow;
 my $data = join("\0", @flags_regexs);
-my $wait = 10;  # 1s
-my $req = pack("Ca*", $wait, $data);
+my $wait = 2;  # seconds; >=5 can give "timeout waiting reply from the slot"
+my $req = pack("Ca*", $wait*10, $data);
 my $reply = $m->npc21(NPC21::Modbus::TAG_LOGGREP, $req);
 
 if (my $err = NPC21::Modbus::error ($reply)) {
@@ -182,7 +182,7 @@ for (;;) {
             sleep 1;
             next;
         }
-        die "LOGGREP command: $err\n";
+        die "LOGMORE command: $err\n";
     }
     my $fd2;
     (undef, $fd2, $logdata) = unpack ("CCa*", $reply);
