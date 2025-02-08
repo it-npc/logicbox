@@ -69,6 +69,19 @@ sub parse_args {
 }
 
 
+sub maybe_decompress
+{
+    local ($_) = @_;
+
+    /\.gz$/  && return "zcat < $_ |";
+    /\.bz2$/ && return "bzcat < $_ |";
+    /\.xz$/  && return "xzcat < $_ |";
+    /\.zst$/ && return "zstdcat < $_ |";
+
+    return $_;
+}
+
+
 $SIG{PIPE} = sub {die "got SIGPIPE, probably Modbus connection failed\n"};
 
 parse_args();
@@ -89,10 +102,10 @@ my $m = NPC21::Modbus->new(
     );
 
 my $file = $otafile;
-open(my $fh, $file) or die "$file: $!\n";
-sysread($fh, my $img, 2e6) == -s $file
-    or die "$file: too big or I/O error\n";
-
+open(my $fh, maybe_decompress($file)) or die "$file: $!\n";
+my $sz = read($fh, my $img, 2e6);
+defined ($sz) && $sz > 0
+    or die "$file: something wrong ($!)\n";
 
 sub ota_begin {
     my ($image_length) = @_;
