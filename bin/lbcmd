@@ -113,10 +113,10 @@ sub parse_args {
             $timeout = $1 || (shift @ARGV) // usage();
         }
         elsif (/^-F$/ || /^--force$/) {
-            $req{force} = 1;
+            $req{force} = {};
         }
         elsif (/^-U$/ || /^--unforce$/) {
-            $req{unforce} = 1;
+            $req{unforce} = {};
         }
         elsif (/^([-\w.]+)=(\d+(\.\d*)?)$/) {
             $val{$1} = $2;
