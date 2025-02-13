@@ -28,8 +28,8 @@ use NPC21::Modbus;
 
 
 sub usage {
-    confess ("Usage: upload PLCNAME plcprogN\n",
-         "       upload PLCNAME plcprogN -c\n",
+    confess ("Usage: upload PLCNAME progN\n",
+         "       upload PLCNAME progN -c\n",
          "       upload -c [path_to/]FILENAME.st\n",
          "       upload [-f conffile.yml] ...\n");
 }
